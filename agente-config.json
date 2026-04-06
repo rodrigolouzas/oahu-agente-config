@@ -1,0 +1,359 @@
+import streamlit as st
+from openai import OpenAI
+import datetime
+import os
+import re
+
+#
+# AGENTE IA - OAHU POKESHOP
+# VERSÃO FINAL COM TODAS AS CORREÇÕES
+#
+
+# Configuração da página
+st.set_page_config(
+    page_title="Oahu Pokeshop - Assistente",
+    page_icon="🍣",
+    layout="wide",
+    initial_sidebar_state="collapsed"
+)
+
+# CSS personalizado - Azul oceano
+st.markdown(
+    """
+    <style>
+    body {
+        background-color: #0077BE;
+        color: white;
+    }
+    .stApp {
+        background-color: #0077BE;
+    }
+    .main-header {
+        text-align: center;
+        font-size: 2.5em;
+        font-weight: bold;
+        color: #FFE5B4;
+        text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+        margin-bottom: 5px;
+    }
+    .tagline {
+        text-align: center;
+        font-size: 1.1em;
+        color: #FFE5B4;
+        margin-bottom: 25px;
+    }
+    .stTextInput input {
+        background-color: #FFE5B4 !important;
+        color: black !important;
+        border-radius: 8px !important;
+        border: 2px solid #FF6B6B !important;
+    }
+    .stButton > button {
+        background-color: #FF6B6B !important;
+        color: white !important;
+        border-radius: 8px !important;
+        font-weight: bold !important;
+        width: 100%;
+    }
+    .stButton > button:hover {
+        background-color: #FF5252 !important;
+    }
+    .user-msg {
+        background-color: #FF6B6B;
+        color: white;
+        padding: 12px;
+        border-radius: 10px;
+        margin: 8px 0;
+        text-align: right;
+        border-left: 4px solid #FFE5B4;
+    }
+    .bot-msg {
+        background-color: #FFE5B4;
+        color: #0077BE;
+        padding: 12px;
+        border-radius: 10px;
+        margin: 8px 0;
+        text-align: left;
+        border-left: 4px solid #FF6B6B;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
+# Cabeçalho
+st.markdown('<div class="main-header">Oahu Pokeshop</div>', unsafe_allow_html=True)
+st.markdown('<div class="tagline">Poke Fresco & Saudável | Culinária Havaiana</div>', unsafe_allow_html=True)
+
+# Mensagem de saudação
+SAUDACAO = """
+Aloha! Bem-vindo ao Oahu Pokeshop.
+
+Sou seu assistente e estou aqui para ajudar com:
+- Menu completo e descrições
+- Monte seu Poke
+- Pokes da Casa
+- Entradas
+- Bebidas e sucos
+- Horários e localização
+- Lojas
+- Reservas
+- Promoções
+- Delivery
+
+Como posso ajudá-lo?
+"""
+
+# Links importantes
+LINK_PEDIDO = "https://pedido.anota.ai/"
+LINK_CARDAPIO = "https://drive.google.com/file/d/1mNngVRDA1gTX8B7TzQ1mWSarFo4Grc9-/view"
+
+# 70 Perguntas e Respostas (resumidas para brevidade)
+QA_BASE = {
+    "Quais são os ingredientes do Tartar de Salmão?": "O Tartar de Salmão é feito com salmão fresco, cream cheese e cebolinha, finalizado sobre chips de banana crocante. Contém 8 unidades e custa R$49,90.",
+    "O Tartar de Salmão é cru?": "Sim, é feito com salmão cru fresco, garantindo a melhor qualidade.",
+    "Qual é a diferença entre Tartar e a Barriga de Salmão?": "O Tartar é cru com cream cheese sobre chips, enquanto a Barriga é grelhada com limão e azeite trufado. Ambas custam R$49,90.",
+    "O que é Uramaki?": "É uma entrada com salmão e cream cheese enrolados na alga e arroz com gergelim. 8 unidades por R$42,90.",
+    "O Hawaiian Roll é vegano?": "Pode ser! É uma massa de burrito com folhas, proteína e toppings. Escolha proteína vegana como Tofu ou Mix de Cogumelos.",
+    "Qual entrada vocês recomendam para quem não gosta de peixe cru?": "Recomendamos Barriga de Salmão (grelhada), Hawaiian Roll (com frango ou tofu) ou Guacamole.",
+    "O Guacamole acompanha alguma coisa?": "Sim, vem com chips de banana e batata doce por R$20,00.",
+    "Qual entrada é mais cara?": "Tartar e Barriga de Salmão, ambas R$49,90.",
+    
+    "Qual é a diferença entre Lil Poke e Poke regular?": "Lil Poke tem 300-350g e começa em R$38,90. Poke tem 450-550g e começa em R$43,90.",
+    "Posso montar meu próprio poke?": "Sim! Escolha: até 2 bases, até 2 proteínas, 1 molho obrigatório, exatamente 3 mix-in, exatamente 3 toppings.",
+    "Quais são as bases disponíveis?": "Arroz branco, Arroz de Couve Flor, Folhas e Quinoa. Escolha até 2.",
+    "Qual proteína é mais cara?": "Salmão custa R$49,90 (Lil) ou R$58,90 (Poke).",
+    "O atum é cru ou cozido?": "Disponível em 3 preparos: cru, grelhado ou empanado. Você escolhe.",
+    "Vocês têm proteína vegana?": "Sim! Tofu grelhado e Mix de cogumelos.",
+    "O que significa dobro de proteína?": "Adicione +R$11 (50g), +R$9 (100g) ou +R$18 (200g) de proteína extra.",
+    "Quantos molhos posso colocar?": "Exatamente 1 molho, que é obrigatório. Escolha entre 6 opções.",
+    "Qual molho recomendam para primeira vez?": "Molho Clássico é equilibrado. Para picante, teste Wasabi ou Sriracha.",
+    "O que colocar nos mix-in?": "Escolha 3 entre 12 opções. Adicionais custam +R$4,90.",
+    "Todos os toppings custam igual?": "Sim, 3 toppings sem custo. Extras custam +R$4,90 cada.",
+    "O poke vem com algo incluído?": "Sim, todos acompanham semente de gergelim e cebolinha.",
+    
+    "O que é o poke HAWAI'I?": "Salmão, abacaxi, pepino, chips de batata doce, coco crocante, nori, molho clássico, arroz branco. Lil: R$49,90 | Poke: R$58,90.",
+    "O que é o poke O'AHU?": "Salmão, atum, manga, kani, pepino, cebola crispy, chips de batata doce, molho tarê, arroz. Lil: R$49,90 | Poke: R$58,90.",
+    "Qual poke é vegano?": "ALOHA. Tofu, cogumelos, abacate, edamame, coco, castanha, banana. Lil: R$41,90 | Poke: R$48,90.",
+    "O que é o poke AIKAU?": "Atum, edamame, cebola roxa, broto de feijão, alho poró crispy, castanha, molho wasabi. Lil: R$49,90 | Poke: R$58,90.",
+    "Qual poke recomendam para primeira vez?": "HAWAI'I é nosso clássico mais equilibrado.",
+    
+    "Qual é a diferença entre sucos simples e especiais?": "Simples (R$15,90): uma fruta básica. Especiais (R$18,90): combinações sofisticadas.",
+    "O que é Citric Drop?": "Abacaxi, cenoura, suco de laranja e gengibre. R$18,90.",
+    "O que é Green Life?": "Manga, abacaxi, couve, espinafre, gengibre, suco de laranja. R$18,90.",
+    "O que é Sweet Swell?": "Banana, mel, frutas vermelhas, açaí. R$18,90.",
+    "O que é Eddie?": "Morango, abacaxi, hortelã. R$18,90.",
+    "Posso adicionar mais frutas no suco simples?": "Sim, segunda fruta custa +R$2,00.",
+    "Qual bebida é mais barata?": "Água com/sem gás a R$7,90.",
+    "Vocês vendem cerveja?": "Sim! Heineken, Stella Artois e Corona (R$14,90-15,90).",
+    "O que é Yai Chá Verde?": "Chá verde premium, saudável e refrescante. R$10,90.",
+    
+    "Qual sobremesa vocês oferecem?": "Banoffee por R$15,00. Torta de banana com doce de leite e chantilly.",
+    "O que é Banoffee?": "Sobremesa britânica: biscoito, doce de leite, banana fresca, chantilly.",
+    "A Banoffee é vegana?": "Não, contém chantilly e doce de leite.",
+    
+    "Vocês têm alguma promoção?": "Sim! 10% OFF em poke nas terças e Clube de Benefícios em app.sistemafidelidade.com.br/oahupoke",
+    "Como funciona o Clube de Benefícios?": "Cadastre-se no app para ganhar pontos e descontos exclusivos.",
+    "Qual é o desconto das terças?": "10% OFF em todos os pokes às terças.",
+    
+    "Quais são os horários?": "Seg-Qui: 11h30-15h30 e 18h-22h30 | Sex: 11h30-23h | Sáb: 12h-23h | Dom: 12h-22h30",
+    "Onde vocês ficam?": "Matriz SJC: Av. Cassiano Ricardo, 319 - loja 18 - Altos do Esplanada | Jacareí: Av. das Letras, 659 - loja 2 | Taubaté: Av. Charles Schneider, 1400",
+    
+    "Vocês têm opção para alérgicos a frutos do mar?": "Sim, temos bowls com tofu e vegetais sem fruto do mar.",
+    "Como lidar com intolerância ao glúten?": "Bases de salada ou quinoa são sem glúten.",
+    "Há opção sem leite?": "Maioria dos molhos é sem lactose. Evite cream cheese e queijo.",
+    
+    "Quais métodos de pagamento?": "Cartão crédito/débito, Dinheiro e PIX.",
+    "É possível pagar com vale-refeição?": "Sim, Alelo e Ticket.",
+    
+    "Como fazer reserva?": "Envie WhatsApp ou visite nossos locais.",
+    "Vocês fazem eventos?": "Sim, aniversários e reuniões corporativas.",
+    "Qual é a política de cancelamento?": "Cancele até 24h antes sem taxa.",
+    
+    "Como customizar?": "Adicione ou remova ingredientes conforme desejar.",
+    "Fazem para dietas paleo ou cetogênica?": "Sim, ajustamos com salada e proteínas.",
+    
+    "Qual combo para família?": "Bowls variados com bebidas economiza.",
+    "Algo leve?": "Bowl de salada com tofu e molho leve.",
+    "Para quem gosta de picante?": "Poke com Wasabi shoyu ou Sriracha.",
+    "Para refeição rápida?": "Bowl com salmão e arroz, pronto em minutos.",
+    
+    "Qual tempo de preparo?": "Cerca de 10-15 minutos para bowls personalizados.",
+    "Fazem catering?": "Sim, customizado para eventos.",
+    "Como é a embalagem?": "Ecológica e segura. +R$5,00 bowl viagem.",
+}
+
+# Função para detectar palavras-chave de PEDIDO
+def detectar_pedido(mensagem):
+    palavras_pedido = [
+        "pedido", "encomendar", "pedir", "fazer pedido", "como encomendar",
+        "onde faz", "qual é o link", "como peço", "como faço",
+        "quero pedir", "gostaria de pedir", "pedir um poke",
+        "onde esta meu pedido", "status do pedido", "rastrear pedido"
+    ]
+    return any(palavra in mensagem.lower() for palavra in palavras_pedido)
+
+# Função para detectar palavras-chave de CARDÁPIO
+def detectar_cardapio(mensagem):
+    palavras_cardapio = [
+        "cardápio", "menu", "o que vocês têm", "qual é o cardápio",
+        "qual é o menu", "quais pratos", "que pokes", "que entradas",
+        "que bebidas", "veja o cardápio", "mostre o menu"
+    ]
+    return any(palavra in mensagem.lower() for palavra in palavras_cardapio)
+
+# Função para salvar chat
+CHAT_FILE = "chat_historico.txt"
+def salvar_chat(usuario_msg, bot_msg):
+    try:
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with open(CHAT_FILE, "a", encoding="utf-8") as f:
+            f.write(f"[{timestamp}] USUÁRIO: {usuario_msg}\n")
+            f.write(f"[{timestamp}] BOT: {bot_msg}\n")
+            f.write("---\n")
+    except Exception as e:
+        st.warning(f"Erro ao salvar: {e}")
+
+# Função para registrar reserva
+RESERVAS_FILE = "reservas.txt"
+def registrar_reserva(nome, loja, data, horario, pessoas):
+    try:
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with open(RESERVAS_FILE, "a", encoding="utf-8") as f:
+            f.write(f"[{timestamp}] Loja: {loja} | Nome: {nome} | Data: {data} | Hora: {horario} | Pessoas: {pessoas}\n")
+        return True
+    except Exception as e:
+        st.error(f"Erro ao salvar reserva: {e}")
+        return False
+
+# System prompt melhorado
+def get_system_prompt():
+    qa_text = "\n".join([f"P: {k}\nR: {v}\n" for k, v in QA_BASE.items()])
+    
+    return f"""
+Você é o assistente do Oahu Pokeshop. Fale em português brasileiro informal mas educado.
+
+REGRAS CRÍTICAS:
+1. NUNCA use "querido" ou "querida".
+2. Mantenha CONTINUIDADE na conversa - entenda o contexto anterior.
+3. Se cliente pergunta sobre poke X, depois sobre preço, BUSQUE NO CARDÁPIO e conecte.
+4. Fale sobre produtos de forma DIRETA e EDUCADA, exatamente como está no cardápio.
+5. Menos emojis - use apenas quando realmente necessário.
+6. Dê "Mahalo" e despeda-se APENAS quando:
+   - Cliente tirou todas as dúvidas
+   - Cliente fez ou confirmou pedido
+   - Cliente pediu o link de pedido
+   NÃO use "esperamos vê-lo em breve" em despedidas normais.
+
+DETECÇÃO DE PALAVRAS-CHAVE - MUITO IMPORTANTE:
+
+*** PALAVRAS DE PEDIDO ***
+Se mensagem contém: "pedido", "encomendar", "pedir", "fazer pedido", "como encomendar", "onde faz pedido", "onde faço", "quero pedir", "onde está meu pedido", "rastrear", ou qualquer variação de PEDIDO/ENCOMENDA:
+RESPONDA DE FORMA OBJETIVA:
+"Para fazer seu pedido, acesse: {LINK_PEDIDO}"
+
+*** PALAVRAS DE CARDÁPIO ***
+Se mensagem contém: "cardápio", "menu", "o que vocês têm", "qual é o cardápio", "qual é o menu", "quais pratos", "que pokes", "que entradas", "que bebidas", ou qualquer variação de CARDÁPIO/MENU:
+RESPONDA DE FORMA OBJETIVA:
+"Veja nosso cardápio completo: {LINK_CARDAPIO}"
+
+BASE DE CONHECIMENTO (70 Q&A):
+{qa_text}
+
+LOCAIS:
+- Matriz SJC: Av. Cassiano Ricardo, 319 - loja 18 - Altos do Esplanada, São José dos Campos, SP
+- Jacareí: Av. das Letras, 659 - loja 2, Pátio Villa Branca, Vila Branca
+- Taubaté: Av. Charles Schneider, 1400, Vila Costa
+
+Fale naturalmente, seja prestativo, mantenha continuidade e sempre detecte estas palavras-chave.
+"""
+
+# Sidebar para API
+with st.sidebar:
+    st.subheader("Configurações")
+    api_key = st.text_input("Cole sua API Key OpenAI:", type="password", help="Obtenha em https://platform.openai.com/api-keys")
+    
+    if api_key:
+        st.success("API carregada")
+    else:
+        st.warning("Insira sua chave API para usar")
+        st.stop()
+
+# Inicializar cliente OpenAI
+client = OpenAI(api_key=api_key)
+
+# Inicializar session state
+if "historico" not in st.session_state:
+    st.session_state.historico = []
+    st.session_state.historico.append({"tipo": "bot", "texto": SAUDACAO})
+
+# Exibir histórico
+st.markdown("---")
+for msg in st.session_state.historico:
+    if msg["tipo"] == "user":
+        st.markdown(f'<div class="user-msg"><b>Você:</b> {msg["texto"]}</div>', unsafe_allow_html=True)
+    else:
+        st.markdown(f'<div class="bot-msg"><b>Oahu:</b> {msg["texto"]}</div>', unsafe_allow_html=True)
+
+st.markdown("---")
+
+# Input
+col1, col2 = st.columns([0.88, 0.12])
+with col1:
+    user_input = st.text_input("Sua mensagem:", placeholder="Escreva aqui...", key="msg_input")
+
+with col2:
+    botao_enviar = st.button("Enviar", use_container_width=True)
+
+# Processar mensagem
+if botao_enviar and user_input:
+    st.session_state.historico.append({"tipo": "user", "texto": user_input})
+    
+    # VERIFICAR PALAVRAS-CHAVE PRIMEIRO
+    if detectar_pedido(user_input):
+        bot_resposta = f"Para fazer seu pedido, acesse: {LINK_PEDIDO}"
+    elif detectar_cardapio(user_input):
+        bot_resposta = f"Veja nosso cardápio completo: {LINK_CARDAPIO}"
+    else:
+        # Chamar OpenAI para resposta normal
+        messages = [{"role": "system", "content": get_system_prompt()}]
+        for msg in st.session_state.historico:
+            role = "user" if msg["tipo"] == "user" else "assistant"
+            messages.append({"role": role, "content": msg["texto"]})
+        
+        try:
+            response = client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=messages,
+                max_tokens=500,
+                temperature=0.7
+            )
+            bot_resposta = response.choices[0].message.content.strip()
+        except Exception as e:
+            bot_resposta = f"Erro ao conectar: {str(e)}\n\nTente novamente."
+    
+    st.session_state.historico.append({"tipo": "bot", "texto": bot_resposta})
+    salvar_chat(user_input, bot_resposta)
+    
+    # Verificar reserva
+    if "reserva" in user_input.lower() or "agendar" in user_input.lower():
+        data = re.search(r"(\d{1,2}[/-]\d{1,2}[/-]\d{4})", user_input)
+        hora = re.search(r"(\d{1,2}[:]?\d{2})", user_input)
+        pessoas = re.search(r"(\d+)\s+(?:pessoas|person)", user_input, re.IGNORECASE)
+        
+        if data and hora and pessoas:
+            registrar_reserva("Cliente", "Matriz SJC", data.group(1), hora.group(1), pessoas.group(1))
+    
+    st.rerun()
+
+# Rodapé
+st.markdown("---")
+col1, col2, col3 = st.columns(3)
+with col1:
+    st.info("Poke Fresco | Saudável")
+with col2:
+    st.success("3 Lojas | SJC, Jacareí, Taubaté")
+with col3:
+    st.warning("Seg-Qui 11h30-15h30 | 18h-22h30")
+
+st.caption("Histórico salvo em 'chat_historico.txt' | Reservas em 'reservas.txt' | @oahupokeshop")
